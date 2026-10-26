@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from calculator import (
+from loan_calc.calculator import (
     amortisation_schedule,
     compare_offers,
     eligible_amount,
