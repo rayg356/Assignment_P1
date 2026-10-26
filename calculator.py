@@ -6,8 +6,7 @@ DEFAULT_CURRENCY = "INR"
 
 
 def _monthly_rate(annual_rate):
-    r = round(annual_rate / 1200, 4)
-    return r
+    return annual_rate / 1200
 
 
 def emi(principal, annual_rate, tenure_months):
