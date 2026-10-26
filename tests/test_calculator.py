@@ -3,6 +3,12 @@ import math
 import pytest
 
 from loan_calc.calculator import (
+    InvalidInstalmentError,
+    InvalidPrepaymentError,
+    InvalidPrincipalError,
+    InvalidRateError,
+    InvalidTenureError,
+    ValidationError,
     amortisation_schedule,
     compare_offers,
     eligible_amount,
@@ -34,10 +40,12 @@ def test_emi_one_month_tenure():
 
 
 def test_emi_invalid_inputs():
-    with pytest.raises(ValueError):
+    with pytest.raises(InvalidPrincipalError):
         emi(0, 9, 240)
-    with pytest.raises(ValueError):
+    with pytest.raises(InvalidTenureError):
         emi(100_000, 9, 0)
+    with pytest.raises(InvalidRateError):
+        emi(100_000, -1, 240)
 
 
 def test_total_payment_and_interest():
@@ -72,8 +80,13 @@ def test_remaining_tenure_zero_rate():
 
 
 def test_remaining_tenure_instalment_too_small():
-    with pytest.raises(ValueError):
+    with pytest.raises(InvalidInstalmentError):
         remaining_tenure(100_000, 12, 100)
+
+
+def test_remaining_tenure_invalid_instalment_zero():
+    with pytest.raises(InvalidInstalmentError):
+        remaining_tenure(100_000, 9, 0)
 
 
 def test_prepayment_savings_reduces_tenure_and_saves_interest():
@@ -90,6 +103,15 @@ def test_prepayment_larger_than_balance():
     assert out["months_saved"] == 4
 
 
+def test_prepayment_invalid_inputs():
+    with pytest.raises(InvalidPrepaymentError):
+        prepayment_savings(200_000, 9, 24, prepay_month=0, prepay_amount=1_000)
+    with pytest.raises(InvalidPrepaymentError):
+        prepayment_savings(200_000, 9, 24, prepay_month=25, prepay_amount=1_000)
+    with pytest.raises(InvalidPrepaymentError):
+        prepayment_savings(200_000, 9, 24, prepay_month=5, prepay_amount=-1)
+
+
 def test_compare_offers_sorted_by_total_cost():
     offers = [
         {"bank": "A", "rate": 9.2, "tenure": 240, "processing_fee_pct": 0.2},
@@ -101,6 +123,13 @@ def test_compare_offers_sorted_by_total_cost():
     assert costs == sorted(costs)
 
 
+def test_compare_offers_validation_errors():
+    with pytest.raises(ValidationError):
+        compare_offers(1_000_000, [])
+    with pytest.raises(ValidationError):
+        compare_offers(1_000_000, [{"bank": "A", "rate": 9.1}])
+
+
 def test_eligible_amount_zero_interest():
     # available = 100000 * 0.5 - 10000 = 40000; amount = 40000 * 12
     assert eligible_amount(100_000, 10_000, 0, 12) == 480000.00
@@ -110,9 +139,27 @@ def test_eligible_amount_no_capacity():
     assert eligible_amount(20_000, 15_000, 10, 120, foir=0.5) == 0.0
 
 
+def test_eligible_amount_validation_errors():
+    with pytest.raises(ValidationError):
+        eligible_amount(0, 10_000, 9, 120)
+    with pytest.raises(ValidationError):
+        eligible_amount(100_000, -1, 9, 120)
+    with pytest.raises(ValidationError):
+        eligible_amount(100_000, 10_000, -1, 120)
+    with pytest.raises(ValidationError):
+        eligible_amount(100_000, 10_000, 9, 0)
+    with pytest.raises(ValidationError):
+        eligible_amount(100_000, 10_000, 9, 120, foir=0)
+
+
 def test_format_inr():
     assert format_inr(1234567.89) == "₹12,34,567.89"
     assert format_inr(-1000) == "-₹1,000.00"
+
+
+def test_format_inr_validation_error():
+    with pytest.raises(ValidationError):
+        format_inr("not-a-number")
 
 
 def test_schedule_to_csv(tmp_path):
@@ -122,6 +169,13 @@ def test_schedule_to_csv(tmp_path):
     text = out_file.read_text()
     assert text.startswith("month,emi,interest,principal,balance\n")
     assert "1," in text
+
+
+def test_schedule_to_csv_validation_errors(tmp_path):
+    with pytest.raises(ValidationError):
+        schedule_to_csv([], str(tmp_path / "x.csv"))
+    with pytest.raises(ValidationError):
+        schedule_to_csv([{"month": 1, "emi": 1.0, "interest": 0.0, "principal": 1.0, "balance": 0.0}], "")
 
 
 def test_summary_structure():

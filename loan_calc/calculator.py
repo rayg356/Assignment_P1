@@ -2,19 +2,66 @@ import math
 from datetime import date
 
 
+class LoanCalcError(Exception):
+    """Base exception for loan calculator errors."""
+
+
+class ValidationError(LoanCalcError):
+    """Raised when input validation fails."""
+
+
+class InvalidPrincipalError(ValidationError):
+    """Raised when principal/balance is invalid."""
+
+
+class InvalidRateError(ValidationError):
+    """Raised when annual interest rate is invalid."""
+
+
+class InvalidTenureError(ValidationError):
+    """Raised when tenure is invalid."""
+
+
+class InvalidInstalmentError(ValidationError):
+    """Raised when instalment amount is invalid."""
+
+
+class InvalidPrepaymentError(ValidationError):
+    """Raised when prepayment input is invalid."""
+
+
 DEFAULT_CURRENCY = "INR"
 
 
+def _validate_principal(principal: float) -> None:
+    if principal <= 0:
+        raise InvalidPrincipalError("principal must be positive")
+
+
+def _validate_rate(annual_rate: float) -> None:
+    if annual_rate < 0:
+        raise InvalidRateError("annual_rate cannot be negative")
+
+
+def _validate_tenure(tenure_months: int) -> None:
+    if tenure_months <= 0:
+        raise InvalidTenureError("tenure must be positive")
+
+
+def _validate_instalment(instalment: float) -> None:
+    if instalment <= 0:
+        raise InvalidInstalmentError("instalment must be positive")
+
+
 def _monthly_rate(annual_rate):
+    _validate_rate(annual_rate)
     return annual_rate / 1200
 
 
 def emi(principal: float, annual_rate: float, tenure_months: int) -> float:
     """Calculate the fixed monthly EMI for a reducing-balance loan."""
-    if tenure_months <= 0:
-        raise ValueError("tenure must be positive")
-    if principal <= 0:
-        raise ValueError("principal must be positive")
+    _validate_tenure(tenure_months)
+    _validate_principal(principal)
     r = _monthly_rate(annual_rate)
     if r == 0:
         return round(principal / tenure_months, 2)
@@ -69,13 +116,14 @@ def outstanding_after(principal: float, annual_rate: float, tenure_months: int, 
 
 def remaining_tenure(balance: float, annual_rate: float, instalment: float) -> int:
     """Estimate remaining tenure (in months) for a balance and fixed instalment."""
+    _validate_instalment(instalment)
     r = _monthly_rate(annual_rate)
     if balance <= 0:
         return 0
     if r == 0:
         return math.ceil(balance / instalment)
     if instalment <= balance * r:
-        raise ValueError("instalment too small to repay the loan")
+        raise InvalidInstalmentError("instalment too small to repay the loan")
     n = -math.log(1 - balance * r / instalment) / math.log(1 + r)
     return math.ceil(n)
 
@@ -84,6 +132,14 @@ def prepayment_savings(
     principal: float, annual_rate: float, tenure_months: int, prepay_month: int, prepay_amount: float
 ) -> dict[str, float]:
     """Keep the same EMI after a lump-sum prepayment and shorten the tenure."""
+    _validate_principal(principal)
+    _validate_rate(annual_rate)
+    _validate_tenure(tenure_months)
+    if prepay_month <= 0 or prepay_month > tenure_months:
+        raise InvalidPrepaymentError("prepay_month must be between 1 and tenure_months")
+    if prepay_amount < 0:
+        raise InvalidPrepaymentError("prepay_amount cannot be negative")
+
     instalment = emi(principal, annual_rate, tenure_months)
     sched = amortisation_schedule(principal, annual_rate, tenure_months)
     balance = sched[prepay_month - 1]["balance"]
@@ -108,8 +164,14 @@ def prepayment_savings(
 
 def compare_offers(principal: float, offers: list[dict]) -> list[dict]:
     """Compare loan offers and return them sorted by total cost."""
+    _validate_principal(principal)
+    if not offers:
+        raise ValidationError("offers cannot be empty")
+
     out = []
     for o in offers:
+        if "bank" not in o or "rate" not in o or "tenure" not in o:
+            raise ValidationError("each offer must contain bank, rate, and tenure")
         e = emi(principal, o["rate"], o["tenure"])
         ti = total_interest(principal, o["rate"], o["tenure"])
         fee = o.get("processing_fee_pct", 0) * principal / 100
@@ -128,6 +190,15 @@ def eligible_amount(
     monthly_income: float, existing_emis: float, annual_rate: float, tenure_months: int, foir: float = 0.5
 ) -> float:
     """Estimate eligible principal amount from income, obligations, and FOIR."""
+    if monthly_income <= 0:
+        raise ValidationError("monthly_income must be positive")
+    if existing_emis < 0:
+        raise ValidationError("existing_emis cannot be negative")
+    _validate_rate(annual_rate)
+    _validate_tenure(tenure_months)
+    if not (0 < foir <= 1):
+        raise ValidationError("foir must be in the range (0, 1]")
+
     available = monthly_income * foir - existing_emis
     if available <= 0:
         return 0.0
@@ -140,6 +211,9 @@ def eligible_amount(
 
 def format_inr(amount: float) -> str:
     """Format a number as INR using Indian-style comma grouping."""
+    if not isinstance(amount, (int, float)):
+        raise ValidationError("amount must be a number")
+
     neg = amount < 0
     amount = abs(round(amount, 2))
     whole, frac = f"{amount:.2f}".split(".")
@@ -157,6 +231,11 @@ def format_inr(amount: float) -> str:
 
 def schedule_to_csv(rows: list[dict[str, float]], path: str) -> None:
     """Write an amortisation schedule to a CSV file."""
+    if not rows:
+        raise ValidationError("rows cannot be empty")
+    if not path:
+        raise ValidationError("path cannot be empty")
+
     with open(path, "w") as fh:
         fh.write("month,emi,interest,principal,balance\n")
         for r in rows:
